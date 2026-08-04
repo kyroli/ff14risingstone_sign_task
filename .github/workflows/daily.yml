@@ -13,7 +13,77 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker://ghcr.io/starhearthunt/ff14risingstone_sign_task:master
-        with:
-          cookie: ${{ secrets.COOKIE }}
-          user_agent: ${{ secrets.USER_AGENT }}
+      - name: Run FF14 Risingstone Tasks with Docker Restart Retry
+        env:
+          COOKIE_1: ${{ secrets.COOKIE }}
+          USER_AGENT_1: ${{ secrets.USER_AGENT }}
+          COOKIE_2: ${{ secrets.COOKIE_2 }}
+          USER_AGENT_2: ${{ secrets.USER_AGENT_2 }}
+          COOKIE_3: ${{ secrets.COOKIE_3 }}
+          USER_AGENT_3: ${{ secrets.USER_AGENT_3 }}
+          COOKIE_4: ${{ secrets.COOKIE_4 }}
+          USER_AGENT_4: ${{ secrets.USER_AGENT_4 }}
+          COOKIE_5: ${{ secrets.COOKIE_5 }}
+          USER_AGENT_5: ${{ secrets.USER_AGENT_5 }}
+        run: |
+          max_attempts=3
+          retry_wait=300
+          overall_exit=0
+
+          for idx in $(seq 1 5); do
+            cookie_var="COOKIE_$idx"
+            ua_var="USER_AGENT_$idx"
+            cookie="${!cookie_var}"
+            ua="${!ua_var}"
+
+            if [ -z "$cookie" ]; then
+              continue
+            fi
+
+            if [ -z "$ua" ]; then
+              ua="$USER_AGENT_1"
+            fi
+
+            echo "=========================================="
+            echo "Processing Account $idx..."
+            echo "=========================================="
+
+            account_status=0
+            for i in $(seq 1 $max_attempts); do
+              echo "Account $idx - Attempt $i of $max_attempts..."
+
+              # 每次重试前清理旧容器，保证环境干净
+              docker rm -f risingstone_task || true
+
+              status=0
+              docker run --name risingstone_task \
+                -e INPUT_COOKIE="$cookie" \
+                -e INPUT_USER_AGENT="$ua" \
+                ghcr.io/starhearthunt/ff14risingstone_sign_task:master || status=$?
+
+              if [ $status -eq 0 ]; then
+                echo "Account $idx - Success on attempt $i!"
+                account_status=0
+                break
+              fi
+
+              account_status=$status
+              if [ $i -lt $max_attempts ]; then
+                echo "Account $idx - Attempt $i failed (exit code: $status). Waiting ${retry_wait}s before retrying..."
+                sleep $retry_wait
+              else
+                echo "Account $idx - Attempt $i failed (exit code: $status). All attempts exhausted."
+              fi
+            done
+
+            echo "Cleaning up container for Account $idx..."
+            docker rm -f risingstone_task || true
+
+            if [ $account_status -ne 0 ]; then
+              echo "Account $idx failed execution."
+              overall_exit=1
+            fi
+          done
+
+          exit $overall_exit
+
